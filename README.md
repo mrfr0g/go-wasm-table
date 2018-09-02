@@ -8,6 +8,9 @@ This is my attempt to learn Go through building something familiar: An infinite 
 
 This creates a Table with some data, and renders it to an HTML5 Canvas element that is included in the HTML file. The Go application compiles to a WebAssembly application, and interacts with the DOM through the "syscall/js" package.
 
+## Motivations
+
+Fun! Learning ... maybe performance? One of the issues with infinite scrolling tables is they share the same thread as everything else in javascript, so their performance is bound by somethings outside of its control. A WebAssembly application would run in its own thread, so its performance would be bounded by the system interface and computer hardware.
 
 ## Building
 
