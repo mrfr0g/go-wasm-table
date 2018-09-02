@@ -4,7 +4,14 @@
 
 This is my attempt to learn Go through building something familiar: An infinite scroll table.
 
+## So, what do we have here?
+
+This creates a Table with some data, and renders it to an HTML5 Canvas element that is included in the HTML file. The Go application compiles to a WebAssembly application, and interacts with the DOM through the "syscall/js" package.
+
+
 ## Building
+
+_Requires go 1.11.0_
 
 Building consists of just running the `build` step in the Makefile. This will compile the main application and client into the `build` directory.
 
@@ -36,5 +43,7 @@ listening on ":8080"...
 ## Todo
 
 ☐ Page rendering
+
 ☐ Feeding / Requesting data
+
 ☐ Mouse interactions
