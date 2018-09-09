@@ -85,17 +85,6 @@ func (t *Table) Render(ctx js.Value, offset float64) {
 			row := Row{Width: int(t.width), Height: t.CellHeight, Columns: t.Columns, Y: t.CellHeight + y - int(offset)}
 			row.Render(ctx)
 		}
-
-		// x, y := 0, i*cellHeight+5
-		// row := Row{Width: int(t.width), Height: t.CellHeight, Columns: t.Columns, Data: }
-		// color := "red"
-
-		// if i%2 == 0 {
-		// 	color = "black"
-		// }
-
-		// ctx.Set("fillStyle", color)
-		// ctx.Call("fillRect", x, float64(t.CellHeight)+float64(y)-offset, cellWidth, cellHeight)
 	}
 
 	// Render header *after* rows, so it is *above*
@@ -158,7 +147,6 @@ func (r *Row) Render(ctx js.Value) {
 	ctx.Set("font", "16px sans-serif")
 	for i := 0; i < len(r.Columns); i++ {
 		x, y := i*widthPerColumn+(widthPerColumn/3), r.Height/2
-		// x, y := i*widthPerColumn+(widthPerColumn/2), r.Height/2
 
 		if i == 0 {
 			ctx.Set("textAlign", "start")
@@ -175,8 +163,6 @@ func (r *Row) Render(ctx js.Value) {
 				ctx.Call("fillText", r.Columns[i].GetData(r.Data), x, r.Y+y)
 			}
 		}
-
-		// ctx.Call("strokeText", h.Columns[i].Property, x, y)
 	}
 
 	ctx.Call("fillRect", 0, r.Y+r.Height-1, r.Width, 1)

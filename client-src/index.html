@@ -58,6 +58,19 @@ license that can be found in the LICENSE file.
 
 		const go = new Go();
 		let mod, inst;
+
+		let data = Array(500).fill({
+			name: 'Foo',
+			date: '01/20/2020',
+			count: '50'
+		});
+
+		window.api = {
+			onMoreData: (index, offset) => {
+				return data.slice(index, index+offset);
+			},
+		};
+
 		WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
 			mod = result.module;
 			inst = result.instance;
