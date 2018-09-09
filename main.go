@@ -125,6 +125,6 @@ func main() {
 		s[i] = v
 	}
 
-	table := sisyphus.Table{Total: 100, Rows: s, Columns: columns, CellHeight: 50}
+	table := sisyphus.Table{Total: 100, Columns: columns, CellHeight: 50}
 	table.Mount()
 }

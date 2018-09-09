@@ -2,24 +2,27 @@ package sisyphus
 
 import (
 	"fmt"
-	"reflect"
+	// "reflect"
 	"strings"
 	"syscall/js"
 )
 
 type Table struct {
-	width      float64
-	height     float64
-	CellHeight int
-	Total      int
-	Rows       []interface{}
-	Columns    []Column
+	width         int
+	height        int
+	CellHeight    int
+	Total         int
+	rows          []js.Value
+	Columns       []Column
+	currentOffset int
+	hasMounted    bool
+	triggerRender bool
 }
 
 func (t *Table) Mount() {
 	var (
-		width           float64
-		height          float64
+		width           int
+		height          int
 		ctx             js.Value
 		virtualScroller VirtualScroller
 	)
@@ -32,8 +35,8 @@ func (t *Table) Mount() {
 	scrollHeighter := doc.Call("getElementById", "scrollHeighter")
 	ctx = canvasEl.Call("getContext", "2d")
 
-	width = viewport.Get("clientWidth").Float()
-	height = viewport.Get("clientHeight").Float()
+	width = viewport.Get("clientWidth").Int()
+	height = viewport.Get("clientHeight").Int()
 
 	t.width = width
 	t.height = height
@@ -41,21 +44,28 @@ func (t *Table) Mount() {
 	canvasEl.Set("width", width)
 	canvasEl.Set("height", height)
 
-	virtualScroller = VirtualScroller{Height: float64(t.CellHeight * t.Total), ScrollerEl: scroller, ScrollHeighterEl: scrollHeighter}
+	virtualScroller = VirtualScroller{Height: t.CellHeight * t.Total, ScrollerEl: scroller, ScrollHeighterEl: scrollHeighter}
 
 	var renderFrame js.Callback
 
 	renderFrame = js.NewCallback(func(args []js.Value) {
+		nextScrollOffset := virtualScroller.GetOffset()
+
+		if !t.shouldRender(nextScrollOffset) {
+			js.Global().Call("requestAnimationFrame", renderFrame)
+			return
+		}
+
 		// Resize canvas if needed
-		curBodyW := viewport.Get("clientWidth").Float()
-		curBodyH := viewport.Get("clientHeight").Float()
+		curBodyW := viewport.Get("clientWidth").Int()
+		curBodyH := viewport.Get("clientHeight").Int()
 		if curBodyW != width || curBodyH != height {
 			width, height = curBodyW, curBodyH
 			canvasEl.Set("width", width)
 			canvasEl.Set("height", height)
 		}
 
-		t.Render(ctx, virtualScroller.GetOffset())
+		t.Render(ctx, nextScrollOffset)
 
 		js.Global().Call("requestAnimationFrame", renderFrame)
 	})
@@ -63,6 +73,8 @@ func (t *Table) Mount() {
 	defer renderFrame.Release()
 
 	virtualScroller.Mount()
+	// Initial render
+	t.Render(ctx, 0)
 
 	// Start loop
 	js.Global().Call("requestAnimationFrame", renderFrame)
@@ -70,19 +82,48 @@ func (t *Table) Mount() {
 	<-done
 }
 
-func (t *Table) Render(ctx js.Value, offset float64) {
+func (t *Table) Render(ctx js.Value, offset int) {
+	// Reset any forced renders
+	t.triggerRender = false
+
 	ctx.Call("clearRect", 0, 0, t.width, t.height)
 	cellHeight := t.CellHeight
-	rowsLen := len(t.Rows)
+	rowsLen := len(t.rows)
+	t.currentOffset = offset
+
+	var api js.Value
+	api = js.Global().Get("api")
 
 	for i := 0; i < t.Total; i++ {
 		y := i * cellHeight
+		yConsideringHeaderOffset := y + cellHeight
+		yConsideringScrollOffset := yConsideringHeaderOffset - offset
+		rowVisible := yConsideringScrollOffset < t.height
+
+		if !rowVisible {
+			continue
+		}
+
+		if t.shouldFetchNextPage(i) {
+			var nextData js.Value
+
+			// @todo convert to async
+			nextData = api.Call("onMoreData", i, i+25)
+
+			for i := 0; i < nextData.Length(); i++ {
+				v := nextData.Index(i)
+				t.rows = append(t.rows, v)
+			}
+
+			t.triggerRender = true
+		}
+
 		if i < rowsLen {
-			rowData := t.Rows[i]
-			row := Row{Width: int(t.width), Height: t.CellHeight, Columns: t.Columns, Data: rowData, Y: t.CellHeight + y - int(offset)}
+			rowData := t.rows[i]
+			row := Row{Width: t.width, Height: t.CellHeight, Columns: t.Columns, Data: rowData, Y: yConsideringScrollOffset}
 			row.Render(ctx)
 		} else {
-			row := Row{Width: int(t.width), Height: t.CellHeight, Columns: t.Columns, Y: t.CellHeight + y - int(offset)}
+			row := Row{Width: t.width, Height: t.CellHeight, Columns: t.Columns, Y: yConsideringScrollOffset}
 			row.Render(ctx)
 		}
 	}
@@ -92,8 +133,24 @@ func (t *Table) Render(ctx js.Value, offset float64) {
 	headerRow.Render(ctx)
 }
 
+func (t *Table) shouldRender(nextOffset int) bool {
+	return t.getCurrentOffset() != nextOffset || t.triggerRender
+}
+
+func (t *Table) getCurrentOffset() int {
+	return t.currentOffset
+}
+
+func (t *Table) shouldFetchNextPage(currentIndex int) bool {
+	rowsLen := len(t.rows)
+	buffer := 25
+	nextSet := currentIndex + buffer
+
+	return rowsLen < nextSet && t.Total >= nextSet
+}
+
 type VirtualScroller struct {
-	Height           float64
+	Height           int
 	ScrollerEl       js.Value
 	ScrollHeighterEl js.Value
 }
@@ -103,11 +160,11 @@ func (v *VirtualScroller) Mount() {
 }
 
 func (v *VirtualScroller) Update() {
-	v.ScrollHeighterEl.Set("style", fmt.Sprintf("height: %gpx", v.Height))
+	v.ScrollHeighterEl.Set("style", fmt.Sprintf("height: %dpx", v.Height))
 }
 
-func (v *VirtualScroller) GetOffset() float64 {
-	return v.ScrollerEl.Get("scrollTop").Float()
+func (v *VirtualScroller) GetOffset() int {
+	return v.ScrollerEl.Get("scrollTop").Int()
 }
 
 type CellData struct {
@@ -118,14 +175,8 @@ type Column struct {
 	Property string
 }
 
-func (c *Column) GetData(row interface{}) string {
-	return getField(row, c.Property)
-}
-
-func getField(row interface{}, field string) string {
-	r := reflect.ValueOf(row)
-	f := reflect.Indirect(r).FieldByName(field)
-	return f.String()
+func (c *Column) GetData(row js.Value) string {
+	return row.Get(c.Property).String()
 }
 
 type Row struct {
@@ -134,7 +185,7 @@ type Row struct {
 	Y        int
 	Columns  []Column
 	IsHeader bool
-	Data     interface{}
+	Data     js.Value
 }
 
 func (r *Row) Render(ctx js.Value) {
@@ -157,7 +208,7 @@ func (r *Row) Render(ctx js.Value) {
 		if r.IsHeader {
 			ctx.Call("fillText", strings.ToUpper(r.Columns[i].Property), x, r.Y+y)
 		} else {
-			if r.Data == nil {
+			if (r.Data == js.Value{}) {
 				ctx.Call("fillText", "*", x, r.Y+y)
 			} else {
 				ctx.Call("fillText", r.Columns[i].GetData(r.Data), x, r.Y+y)

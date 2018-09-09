@@ -67,6 +67,7 @@ license that can be found in the LICENSE file.
 
 		window.api = {
 			onMoreData: (index, offset) => {
+				console.log('api called', index, offset);
 				return data.slice(index, index+offset);
 			},
 		};
