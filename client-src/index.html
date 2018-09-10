@@ -36,12 +36,73 @@ license that can be found in the LICENSE file.
 		#scrollHeighter {
 			height: 1px;
 		}
+	</style>
+	<style>
+	.lds-ellipsis {
+	  display: inline-block;
+	  position: fixed;
+	  left: 50vw;
+	  top: 50vh;
+	  width: 128px;
+	  height: 128px;
+	  transform: scale(2);
+	}
+	.lds-ellipsis div {
+	  position: absolute;
+	  top: 27px;
+	  width: 11px;
+	  height: 11px;
+	  border-radius: 50%;
+	  background: #0070BB;
+	  animation-timing-function: cubic-bezier(0, 1, 1, 0);
+	}
+	.lds-ellipsis div:nth-child(1) {
+	  left: 6px;
+	  animation: lds-ellipsis1 0.6s infinite;
+	}
+	.lds-ellipsis div:nth-child(2) {
+	  left: 6px;
+	  animation: lds-ellipsis2 0.6s infinite;
+	}
+	.lds-ellipsis div:nth-child(3) {
+	  left: 26px;
+	  animation: lds-ellipsis2 0.6s infinite;
+	}
+	.lds-ellipsis div:nth-child(4) {
+	  left: 45px;
+	  animation: lds-ellipsis3 0.6s infinite;
+	}
+	@keyframes lds-ellipsis1 {
+	  0% {
+	    transform: scale(0);
+	  }
+	  100% {
+	    transform: scale(1);
+	  }
+	}
+	@keyframes lds-ellipsis3 {
+	  0% {
+	    transform: scale(1);
+	  }
+	  100% {
+	    transform: scale(0);
+	  }
+	}
+	@keyframes lds-ellipsis2 {
+	  0% {
+	    transform: translate(0, 0);
+	  }
+	  100% {
+	    transform: translate(19px, 0);
+	  }
+	}
 
 	</style>
 </head>
 
 <body>
-	<div id="viewport">
+	<div id="loader" class="lds-ellipsis"><div></div><div></div><div></div><div></div></div>
+	<div id="viewport" style="visibility: hidden">
 		<canvas id="surface"></canvas>
 		<div id="scroller">
 			<div id="scrollHeighter"></div>
@@ -72,6 +133,9 @@ license that can be found in the LICENSE file.
 			},
 		};
 
+		const viewport = document.getElementById('viewport');
+		const loader = document.getElementById('loader');
+
 		WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
 			mod = result.module;
 			inst = result.instance;
@@ -81,6 +145,10 @@ license that can be found in the LICENSE file.
 
 		async function run() {
 			console.clear();
+			
+			loader.parentNode.removeChild(loader);
+			viewport.style.visibility = 'visible';
+
 			await go.run(inst);
 			inst = await WebAssembly.instantiate(mod, go.importObject); // reset instance
 		}
