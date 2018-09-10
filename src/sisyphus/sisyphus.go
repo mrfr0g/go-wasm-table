@@ -3,8 +3,11 @@ package sisyphus
 import (
 	"fmt"
 	// "reflect"
+	"github.com/patrickmn/go-cache"
+	"math"
 	"strings"
 	"syscall/js"
+	"time"
 )
 
 type Table struct {
@@ -17,6 +20,10 @@ type Table struct {
 	currentOffset int
 	hasMounted    bool
 	triggerRender bool
+	store         *cache.Cache
+	pages         []Page
+	PageSize      int
+	api           js.Value
 }
 
 func (t *Table) Mount() {
@@ -26,6 +33,11 @@ func (t *Table) Mount() {
 		ctx             js.Value
 		virtualScroller VirtualScroller
 	)
+	t.api = js.Global().Get("api")
+
+	t.fillPages()
+	t.store = cache.New(60*time.Minute, 10*time.Minute)
+	t.hydratePage(0)
 
 	done := make(chan struct{}, 0)
 	doc := js.Global().Get("document")
@@ -82,17 +94,45 @@ func (t *Table) Mount() {
 	<-done
 }
 
+func (t *Table) fillPages() {
+	pages := float64(t.Total) / float64(t.PageSize)
+
+	f := RoundUpToWholeNumber(pages)
+
+	for i := 0; i < f; i++ {
+		t.pages = append(t.pages, Page{Offset: i * t.PageSize, Size: t.PageSize})
+	}
+}
+
+func RoundUpToWholeNumber(x float64) int {
+	t := math.Trunc(x)
+
+	if math.Abs(x-t) > 0 {
+		return int(t + math.Copysign(1, x))
+	}
+	return int(t)
+}
+
+func (t *Table) getStoredRowCount() int {
+	var count int
+	rx, found := t.store.Get("count")
+
+	if found {
+		count = rx.(int)
+	}
+
+	return count
+}
+
 func (t *Table) Render(ctx js.Value, offset int) {
 	// Reset any forced renders
 	t.triggerRender = false
 
 	ctx.Call("clearRect", 0, 0, t.width, t.height)
 	cellHeight := t.CellHeight
-	rowsLen := len(t.rows)
 	t.currentOffset = offset
 
-	var api js.Value
-	api = js.Global().Get("api")
+	// count := t.getStoredRowCount()
 
 	for i := 0; i < t.Total; i++ {
 		y := i * cellHeight
@@ -104,33 +144,45 @@ func (t *Table) Render(ctx js.Value, offset int) {
 			continue
 		}
 
+		// doing a lot of work here... probably a bad idea
 		if t.shouldFetchNextPage(i) {
-			var nextData js.Value
+			currentPageIndex := i / t.PageSize
 
 			// @todo convert to async
-			nextData = api.Call("onMoreData", i, i+25)
-
-			for i := 0; i < nextData.Length(); i++ {
-				v := nextData.Index(i)
-				t.rows = append(t.rows, v)
-			}
+			t.hydratePage(currentPageIndex + 1)
 
 			t.triggerRender = true
 		}
 
-		if i < rowsLen {
-			rowData := t.rows[i]
-			row := Row{Width: t.width, Height: t.CellHeight, Columns: t.Columns, Data: rowData, Y: yConsideringScrollOffset}
-			row.Render(ctx)
-		} else {
-			row := Row{Width: t.width, Height: t.CellHeight, Columns: t.Columns, Y: yConsideringScrollOffset}
-			row.Render(ctx)
+		var rowData *js.Value
+		rxd, foundRow := t.store.Get(fmt.Sprintf("record-%d", i))
+
+		if foundRow {
+			rowData = rxd.(*js.Value)
 		}
+
+		row := Row{Width: t.width, Height: t.CellHeight, Columns: t.Columns, Data: rowData, Y: yConsideringScrollOffset}
+		row.Render(ctx)
 	}
 
 	// Render header *after* rows, so it is *above*
 	headerRow := Row{Width: int(t.width), Height: t.CellHeight, Columns: t.Columns, IsHeader: true, Y: 0}
 	headerRow.Render(ctx)
+}
+
+func (t *Table) hydratePage(pageIndex int) {
+	page := &t.pages[pageIndex]
+
+	var nextData js.Value
+	nextData = t.api.Call("onMoreData", page.Offset, page.Size)
+	nextDataLength := nextData.Length()
+
+	for idx := 0; idx < nextDataLength; idx++ {
+		v := nextData.Index(idx)
+		t.store.Set(fmt.Sprintf("record-%d", page.Offset+idx), &v, cache.NoExpiration)
+	}
+
+	page.Fulfilled = true
 }
 
 func (t *Table) shouldRender(nextOffset int) bool {
@@ -142,11 +194,20 @@ func (t *Table) getCurrentOffset() int {
 }
 
 func (t *Table) shouldFetchNextPage(currentIndex int) bool {
-	rowsLen := len(t.rows)
-	buffer := 25
-	nextSet := currentIndex + buffer
+	currentPageIndex := currentIndex / t.PageSize
+	percentOverPage := float32(currentIndex)/float32(t.PageSize) - float32(currentPageIndex)
+	overthresholdForNextPage := percentOverPage >= 0.8
+	currentPageFulfilled := t.pages[currentPageIndex].Fulfilled
 
-	return rowsLen < nextSet && t.Total >= nextSet
+	var nextPageFulfilled bool
+
+	if currentPageIndex+1 > len(t.pages)-1 {
+		nextPageFulfilled = true
+	} else {
+		nextPageFulfilled = t.pages[currentPageIndex+1].Fulfilled
+	}
+
+	return !currentPageFulfilled || overthresholdForNextPage && !nextPageFulfilled
 }
 
 type VirtualScroller struct {
@@ -167,15 +228,21 @@ func (v *VirtualScroller) GetOffset() int {
 	return v.ScrollerEl.Get("scrollTop").Int()
 }
 
-type CellData struct {
-	Value string
+type Page struct {
+	Offset    int
+	Size      int
+	Fulfilled bool
 }
 
 type Column struct {
 	Property string
 }
 
-func (c *Column) GetData(row js.Value) string {
+func (c *Column) GetData(row *js.Value) string {
+	if row == nil {
+		return "*"
+	}
+
 	return row.Get(c.Property).String()
 }
 
@@ -185,7 +252,7 @@ type Row struct {
 	Y        int
 	Columns  []Column
 	IsHeader bool
-	Data     js.Value
+	Data     *js.Value
 }
 
 func (r *Row) Render(ctx js.Value) {
@@ -208,11 +275,7 @@ func (r *Row) Render(ctx js.Value) {
 		if r.IsHeader {
 			ctx.Call("fillText", strings.ToUpper(r.Columns[i].Property), x, r.Y+y)
 		} else {
-			if (r.Data == js.Value{}) {
-				ctx.Call("fillText", "*", x, r.Y+y)
-			} else {
-				ctx.Call("fillText", r.Columns[i].GetData(r.Data), x, r.Y+y)
-			}
+			ctx.Call("fillText", r.Columns[i].GetData(r.Data), x, r.Y+y)
 		}
 	}
 
